@@ -62,7 +62,7 @@ function(add_test_r TEST_NAME NP)
     # Copy files to test working directory
     file(COPY ${TEST_FILES} DESTINATION "${CURRENT_TEST_BINARY_DIR}/")
     # Set some default runtime options for all tests in this category
-    set(RUNTIME_OPTIONS "max_step=10 amr.plot_file=plt amr.checkpoint_files_output=0 amr.plot_files_output=1")
+    set(RUNTIME_OPTIONS "time.max_step=10 amr.plot_file=plt amr.checkpoint_files_output=0 amr.plot_files_output=1")
     # Use fcompare to test diffs in plots against gold files
     if(AMR_WIND_TEST_WITH_FCOMPARE)
       set(FCOMPARE_COMMAND "&& ${FCOMPARE} ${PLOT_GOLD} ${PLOT_TEST}")
@@ -75,8 +75,14 @@ function(add_test_r TEST_NAME NP)
     # Add test and actual test commands to CTest database
     add_test(${TEST_NAME} sh -c "${MPI_COMMANDS} ${CMAKE_BINARY_DIR}/${amr_wind_exe_name} ${MPIEXEC_POSTFLAGS} ${CURRENT_TEST_BINARY_DIR}/${TEST_NAME}.i ${RUNTIME_OPTIONS} ${FCOMPARE_COMMAND}")
     # Set properties for test
-    set_tests_properties(${TEST_NAME} PROPERTIES TIMEOUT 1500 PROCESSORS ${NP} WORKING_DIRECTORY "${CURRENT_TEST_BINARY_DIR}/" LABELS "regression")
+    set_tests_properties(${TEST_NAME} PROPERTIES TIMEOUT 3000 PROCESSORS ${NP} WORKING_DIRECTORY "${CURRENT_TEST_BINARY_DIR}/" LABELS "regression")
 endfunction(add_test_r)
+
+# Regression tests excluded from CI
+function(add_test_re TEST_NAME NP)
+    add_test_r(${TEST_NAME} ${NP})
+    set_tests_properties(${TEST_NAME} PROPERTIES LABELS "regression;no_ci")
+endfunction(add_test_re)
 
 # Standard unit test
 function(add_test_u TEST_NAME NP)
@@ -97,10 +103,28 @@ function(add_test_u TEST_NAME NP)
 endfunction(add_test_u)
 
 #=============================================================================
+# Unit tests
+#=============================================================================
+add_test_u(unit_tests 1)
+
+#=============================================================================
 # Regression tests
 #=============================================================================
 add_test_r(tgv_mol 4)
 add_test_r(tgv_godunov 4)
+add_test_r(boussinesq_bubble_mol 4)
+add_test_r(boussinesq_bubble_godunov 4)
+add_test_r(abl_mol 4)
+add_test_r(abl_godunov 4)
+
+#=============================================================================
+# Regression tests excluded from CI
+#=============================================================================
+add_test_re(rayleigh_taylor_godunov 4)
+add_test_re(abl_godunov_explicit 4)
+add_test_re(abl_godunov_cn 4)
+add_test_re(abl_mol_explicit 4)
+add_test_re(abl_mol_cn 4)
 
 #=============================================================================
 # Verification tests
@@ -109,9 +133,4 @@ add_test_r(tgv_godunov 4)
 #=============================================================================
 # Performance tests
 #=============================================================================
-
-#=============================================================================
-# Unit tests
-#=============================================================================
-add_test_u(unit_tests 1)
 

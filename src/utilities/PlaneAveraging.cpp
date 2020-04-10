@@ -231,8 +231,13 @@ Real PlaneAveraging::eval_line_average(Real x, int comp)
         const Real x1 = xlo + (ind+0.5)*dx;
         c = (x-x1)/dx;
     }
+    
+    if( ind+1 >= ncell_line){
+        ind = ncell_line-2;
+        c = 1.0;
+    }
 
-    AMREX_ALWAYS_ASSERT(ind>=0 and ind<ncell_line);
+    AMREX_ALWAYS_ASSERT(ind>=0 and ind+1<ncell_line);
 
     return line_average[navg*ind+comp]*(1.0-c) + line_average[navg*(ind+1)+comp]*c;
     
@@ -284,46 +289,4 @@ PlaneAveraging::PlaneAveraging(amrex::Vector<amrex::Geometry>& geom,
             break;
     }
     
-}
-
-PlaneAveraging::PlaneAveraging(
-    const amrex::Geometry& geom,
-    const LevelData& leveldata,
-    int axis)
-{
-    xlo = geom.ProbLo(axis);
-    dx = geom.CellSize(axis);
-    const auto& domain = geom.Domain();
-    const IntVect dom_lo(domain.loVect());
-    const IntVect dom_hi(domain.hiVect());
-
-    ncell_line = dom_hi[axis]-dom_lo[axis]+1;
-
-    // count number of cells in plane
-    ncell_plane = 1;
-    for(int i=0;i<AMREX_SPACEDIM;++i){
-        if(i!=axis) ncell_plane *= (dom_hi[i]-dom_lo[i]+1);
-    }
-
-    line_average.resize(ncell_line*navg,0.0);
-    line_fluctuation.resize(ncell_line*nfluc,0.0);
-    line_xcentroid.resize(ncell_line,0.0);
-
-    const auto& velocity = leveldata.velocity;
-    const auto& tracer = leveldata.tracer;
-
-    switch (axis) {
-    case 0:
-        fill_line(XDir(), velocity, tracer);
-        break;
-    case 1:
-        fill_line(YDir(), velocity, tracer);
-        break;
-    case 2:
-        fill_line(ZDir(), velocity, tracer);
-        break;
-    default:
-        amrex::Abort("axis must be equal to 0, 1, or 2");
-        break;
-    }
 }

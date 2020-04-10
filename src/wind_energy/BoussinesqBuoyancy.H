@@ -5,7 +5,7 @@
 #include "AMReX_Box.H"
 #include "AMReX_REAL.H"
 #include "AMReX_Vector.H"
-#include "LevelData.H"
+#include "AMReX_MultiFab.H"
 
 namespace amr_wind {
 
@@ -16,8 +16,7 @@ public:
 
     void operator()(
         const amrex::Box& bx,
-        const amrex::Array4<const amrex::Real>& scalars_old,
-        const amrex::Array4<const amrex::Real>& scalars_new,
+        const amrex::Array4<const amrex::Real>& scalars,
         const amrex::Array4<amrex::Real>& vel_forces) const;
 
 private:

@@ -6,6 +6,7 @@ target_sources(${amr_wind_lib_name}
   incflo_tagging.cpp
   incflo_regrid.cpp
   incflo_compute_forces.cpp
+  incflo_field_repo.cpp
   )
 
 target_sources(${amr_wind_exe_name} PRIVATE main.cpp)
@@ -35,9 +36,6 @@ add_subdirectory(setup)
 add_subdirectory(utilities)
 add_subdirectory(prob)
 add_subdirectory(wind_energy)
-if(AMR_WIND_ENABLE_EB)
-   add_subdirectory(embedded_boundaries)
-endif()
 
 target_link_libraries_system(${amr_wind_lib_name} PUBLIC amrex)
 target_link_libraries(${amr_wind_exe_name} PRIVATE ${amr_wind_lib_name})

@@ -2,15 +2,12 @@
 #include <incflo.H>
 
 #include "ABL.H"
-
-// Need this for TagCutCells
-#ifdef AMREX_USE_EB
-#include <AMReX_EBAmrUtil.H>
-#endif
+#include "RefinementCriteria.H"
 
 using namespace amrex;
 
 incflo::incflo ()
+    : m_repo(*this)
 {
     // NOTE: Geometry on all levels has just been defined in the AmrCore
     // constructor. No valid BoxArray and DistributionMapping have been defined.
@@ -20,15 +17,10 @@ incflo::incflo ()
     // Read inputs file using ParmParse
     ReadParameters();
 
-#ifdef AMREX_USE_EB
-    // This is needed before initializing level MultiFab
-    MakeEBGeometry();
-#endif
-
-    // Initialize memory for data-array internals
-    ResizeArrays();
+    declare_fields();
 
     init_bcs();
+    init_field_bcs();
 
     init_advection();
 
@@ -56,7 +48,7 @@ void incflo::InitData ()
         // This is an AmrCore member function which recursively makes new levels
         // with MakeNewLevelFromScratch.
         InitFromScratch(m_time.current_time());
-        
+
         if (m_do_initial_proj) {
             InitialProjection();
         }
@@ -86,12 +78,6 @@ void incflo::InitData ()
         amrex::Print() << "Time, Kinetic Energy: " << m_time.current_time() << ", " << ComputeKineticEnergy() << std::endl;
     }
 
-#ifdef AMREX_USE_EB
-    ParmParse pp("incflo");
-    bool write_eb_surface = false;
-    pp.query("write_eb_surface", write_eb_surface);
-    if (write_eb_surface) WriteMyEBSurface();
-#endif
 
     if (m_verbose > 0 and ParallelDescriptor::IOProcessor()) {
         printGridSummary(amrex::OutStream(), 0, finest_level);
@@ -164,30 +150,13 @@ void incflo::MakeNewLevelFromScratch (int lev, Real time, const BoxArray& new_gr
     SetBoxArray(lev, new_grids);
     SetDistributionMap(lev, new_dmap);
 
-#ifdef AMREX_USE_EB
-    m_factory[lev] = makeEBFabFactory(geom[lev], grids[lev], dmap[lev],
-                                      {nghost_eb_basic(),
-                                       nghost_eb_volume(),
-                                       nghost_eb_full()},
-                                       EBSupport::full);
-#else
-    m_factory[lev].reset(new FArrayBoxFactory());
-#endif
-
-    m_leveldata[lev].reset(new LevelData(grids[lev], dmap[lev], *m_factory[lev],
-                                         m_ntrac, nghost_state(),
-                                         m_use_godunov,
-                                         m_diff_type==DiffusionType::Implicit,
-                                         m_advect_tracer));
-
-    m_t_new[lev] = time;
-    m_t_old[lev] = time - 1.e200;
+    m_repo.make_new_level_from_scratch(lev, time, new_grids, new_dmap);
 
     if (m_restart_file.empty()) {
         prob_init_fluid(lev);
 
         for (auto& pp: m_physics) {
-            pp->initialize_fields(Geom(lev), *m_leveldata[lev]);
+            pp->initialize_fields(lev, Geom(lev));
         }
     }
 }
@@ -207,306 +176,4 @@ void incflo::AverageDown()
 void incflo::AverageDownTo(int /* crse_lev */)
 {
     amrex::Abort("xxxxx TODO AverageDownTo");
-}
-
-Vector<MultiFab*> incflo::get_velocity_old () noexcept
-{
-    Vector<MultiFab*> r;
-    r.reserve(finest_level+1);
-    for (int lev = 0; lev <= finest_level; ++lev) {
-        r.push_back(&(m_leveldata[lev]->velocity_o));
-    }
-    return r;
-}
-
-Vector<MultiFab*> incflo::get_velocity_new () noexcept
-{
-    Vector<MultiFab*> r;
-    r.reserve(finest_level+1);
-    for (int lev = 0; lev <= finest_level; ++lev) {
-        r.push_back(&(m_leveldata[lev]->velocity));
-    }
-    return r;
-}
-
-Vector<MultiFab*> incflo::get_density_old () noexcept
-{
-    Vector<MultiFab*> r;
-    r.reserve(finest_level+1);
-    for (int lev = 0; lev <= finest_level; ++lev) {
-        r.push_back(&(m_leveldata[lev]->density_o));
-    }
-    return r;
-}
-
-Vector<MultiFab*> incflo::get_density_new () noexcept
-{
-    Vector<MultiFab*> r;
-    r.reserve(finest_level+1);
-    for (int lev = 0; lev <= finest_level; ++lev) {
-        r.push_back(&(m_leveldata[lev]->density));
-    }
-    return r;
-}
-
-Vector<MultiFab*> incflo::get_tracer_old () noexcept
-{
-    Vector<MultiFab*> r;
-    r.reserve(finest_level+1);
-    for (int lev = 0; lev <= finest_level; ++lev) {
-        r.push_back(&(m_leveldata[lev]->tracer_o));
-    }
-    return r;
-}
-
-Vector<MultiFab*> incflo::get_tracer_new () noexcept
-{
-    Vector<MultiFab*> r;
-    r.reserve(finest_level+1);
-    for (int lev = 0; lev <= finest_level; ++lev) {
-        r.push_back(&(m_leveldata[lev]->tracer));
-    }
-    return r;
-}
-
-Vector<MultiFab*> incflo::get_conv_velocity_old () noexcept
-{
-    Vector<MultiFab*> r;
-    r.reserve(finest_level+1);
-    for (int lev = 0; lev <= finest_level; ++lev) {
-        r.push_back(&(m_leveldata[lev]->conv_velocity_o));
-    }
-    return r;
-}
-
-Vector<MultiFab*> incflo::get_conv_velocity_new () noexcept
-{
-    Vector<MultiFab*> r;
-    r.reserve(finest_level+1);
-    for (int lev = 0; lev <= finest_level; ++lev) {
-        r.push_back(&(m_leveldata[lev]->conv_velocity));
-    }
-    return r;
-}
-
-Vector<MultiFab*> incflo::get_conv_density_old () noexcept
-{
-    Vector<MultiFab*> r;
-    r.reserve(finest_level+1);
-    for (int lev = 0; lev <= finest_level; ++lev) {
-        r.push_back(&(m_leveldata[lev]->conv_density_o));
-    }
-    return r;
-}
-
-Vector<MultiFab*> incflo::get_conv_density_new () noexcept
-{
-    Vector<MultiFab*> r;
-    r.reserve(finest_level+1);
-    for (int lev = 0; lev <= finest_level; ++lev) {
-        r.push_back(&(m_leveldata[lev]->conv_density));
-    }
-    return r;
-}
-
-Vector<MultiFab*> incflo::get_conv_tracer_old () noexcept
-{
-    Vector<MultiFab*> r;
-    r.reserve(finest_level+1);
-    for (int lev = 0; lev <= finest_level; ++lev) {
-        r.push_back(&(m_leveldata[lev]->conv_tracer_o));
-    }
-    return r;
-}
-
-Vector<MultiFab*> incflo::get_conv_tracer_new () noexcept
-{
-    Vector<MultiFab*> r;
-    r.reserve(finest_level+1);
-    for (int lev = 0; lev <= finest_level; ++lev) {
-        r.push_back(&(m_leveldata[lev]->conv_tracer));
-    }
-    return r;
-}
-
-Vector<MultiFab*> incflo::get_divtau_old () noexcept
-{
-    Vector<MultiFab*> r;
-    r.reserve(finest_level+1);
-    for (int lev = 0; lev <= finest_level; ++lev) {
-        r.push_back(&(m_leveldata[lev]->divtau_o));
-    }
-    return r;
-}
-
-Vector<MultiFab*> incflo::get_divtau_new () noexcept
-{
-    Vector<MultiFab*> r;
-    r.reserve(finest_level+1);
-    for (int lev = 0; lev <= finest_level; ++lev) {
-        r.push_back(&(m_leveldata[lev]->divtau));
-    }
-    return r;
-}
-
-Vector<MultiFab*> incflo::get_laps_old () noexcept
-{
-    Vector<MultiFab*> r;
-    r.reserve(finest_level+1);
-    for (int lev = 0; lev <= finest_level; ++lev) {
-        r.push_back(&(m_leveldata[lev]->laps_o));
-    }
-    return r;
-}
-
-Vector<MultiFab*> incflo::get_laps_new () noexcept
-{
-    Vector<MultiFab*> r;
-    r.reserve(finest_level+1);
-    for (int lev = 0; lev <= finest_level; ++lev) {
-        r.push_back(&(m_leveldata[lev]->laps));
-    }
-    return r;
-}
-
-Vector<MultiFab const*> incflo::get_velocity_old_const () const noexcept
-{
-    Vector<MultiFab const*> r;
-    r.reserve(finest_level+1);
-    for (int lev = 0; lev <= finest_level; ++lev) {
-        r.push_back(&(m_leveldata[lev]->velocity_o));
-    }
-    return r;
-}
-
-Vector<MultiFab const*> incflo::get_velocity_new_const () const noexcept
-{
-    Vector<MultiFab const*> r;
-    r.reserve(finest_level+1);
-    for (int lev = 0; lev <= finest_level; ++lev) {
-        r.push_back(&(m_leveldata[lev]->velocity));
-    }
-    return r;
-}
-
-Vector<MultiFab const*> incflo::get_density_old_const () const noexcept
-{
-    Vector<MultiFab const*> r;
-    r.reserve(finest_level+1);
-    for (int lev = 0; lev <= finest_level; ++lev) {
-        r.push_back(&(m_leveldata[lev]->density_o));
-    }
-    return r;
-}
-
-Vector<MultiFab const*> incflo::get_density_new_const () const noexcept
-{
-    Vector<MultiFab const*> r;
-    r.reserve(finest_level+1);
-    for (int lev = 0; lev <= finest_level; ++lev) {
-        r.push_back(&(m_leveldata[lev]->density));
-    }
-    return r;
-}
-
-Vector<MultiFab const*> incflo::get_tracer_old_const () const noexcept
-{
-    Vector<MultiFab const*> r;
-    r.reserve(finest_level+1);
-    for (int lev = 0; lev <= finest_level; ++lev) {
-        r.push_back(&(m_leveldata[lev]->tracer_o));
-    }
-    return r;
-}
-
-Vector<MultiFab const*> incflo::get_tracer_new_const () const noexcept
-{
-    Vector<MultiFab const*> r;
-    r.reserve(finest_level+1);
-    for (int lev = 0; lev <= finest_level; ++lev) {
-        r.push_back(&(m_leveldata[lev]->tracer));
-    }
-    return r;
-}
-
-void incflo::copy_from_new_to_old_velocity (IntVect const& ng)
-{
-    for (int lev = 0; lev <= finest_level; ++lev) {
-        copy_from_new_to_old_velocity(lev, ng);
-    }
-}
-
-void incflo::copy_from_new_to_old_velocity (int lev, IntVect const& ng)
-{
-    MultiFab::Copy(m_leveldata[lev]->velocity_o,
-                   m_leveldata[lev]->velocity, 0, 0, AMREX_SPACEDIM, ng);
-}
-
-void incflo::copy_from_old_to_new_velocity (IntVect const& ng)
-{
-    for (int lev = 0; lev <= finest_level; ++lev) {
-        copy_from_old_to_new_velocity(lev, ng);
-    }
-}
-
-void incflo::copy_from_old_to_new_velocity (int lev, IntVect const& ng)
-{
-    MultiFab::Copy(m_leveldata[lev]->velocity,
-                   m_leveldata[lev]->velocity_o, 0, 0, AMREX_SPACEDIM, ng);
-}
-
-void incflo::copy_from_new_to_old_density (IntVect const& ng)
-{
-    for (int lev = 0; lev <= finest_level; ++lev) {
-        copy_from_new_to_old_density(lev, ng);
-    }
-}
-
-void incflo::copy_from_new_to_old_density (int lev, IntVect const& ng)
-{
-    MultiFab::Copy(m_leveldata[lev]->density_o,
-                   m_leveldata[lev]->density, 0, 0, 1, ng);
-}
-
-void incflo::copy_from_old_to_new_density (IntVect const& ng)
-{
-    for (int lev = 0; lev <= finest_level; ++lev) {
-        copy_from_old_to_new_density(lev, ng);
-    }
-}
-
-void incflo::copy_from_old_to_new_density (int lev, IntVect const& ng)
-{
-    MultiFab::Copy(m_leveldata[lev]->density,
-                   m_leveldata[lev]->density_o, 0, 0, 1, ng);
-}
-
-void incflo::copy_from_new_to_old_tracer (IntVect const& ng)
-{
-    for (int lev = 0; lev <= finest_level; ++lev) {
-        copy_from_new_to_old_tracer(lev, ng);
-    }
-}
-
-void incflo::copy_from_new_to_old_tracer (int lev, IntVect const& ng)
-{
-    if (m_ntrac > 0) {
-        MultiFab::Copy(m_leveldata[lev]->tracer_o,
-                       m_leveldata[lev]->tracer, 0, 0, m_ntrac, ng);
-    }
-}
-
-void incflo::copy_from_old_to_new_tracer (IntVect const& ng)
-{
-    for (int lev = 0; lev <= finest_level; ++lev) {
-        copy_from_old_to_new_tracer(lev, ng);
-    }
-}
-
-void incflo::copy_from_old_to_new_tracer (int lev, IntVect const& ng)
-{
-    if (m_ntrac > 0) {
-        MultiFab::Copy(m_leveldata[lev]->tracer,
-                       m_leveldata[lev]->tracer_o, 0, 0, m_ntrac, ng);
-    }
 }

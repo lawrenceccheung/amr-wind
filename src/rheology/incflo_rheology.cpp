@@ -5,38 +5,15 @@ using namespace amrex;
 
 namespace {
 
-AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-amrex::Real expterm (amrex::Real nu) noexcept
-{
-    return (nu < 1.e-9) ? (1.0-0.5*nu+nu*nu*(1.0/6.0)-(nu*nu*nu)*(1./24.))
-                        : -std::expm1(-nu)/nu;
-}
-
 struct NonNewtonianViscosity
 {
     incflo::FluidModel fluid_model;
-    amrex::Real mu, n_flow, tau_0, eta_0, papa_reg, smag_const;
+    amrex::Real mu, smag_const;
 
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
     amrex::Real operator() (amrex::Real sr, amrex::Real den, amrex::Real ds) const noexcept {
         switch (fluid_model)
         {
-        case incflo::FluidModel::powerlaw:
-        {
-            return mu * std::pow(sr,n_flow-1.0);
-        }
-        case incflo::FluidModel::Bingham:
-        {
-            return mu + tau_0 * expterm(sr/papa_reg) / papa_reg;
-        }
-        case incflo::FluidModel::HerschelBulkley:
-        {
-            return (mu*std::pow(sr,n_flow)+tau_0)*expterm(sr/papa_reg)/papa_reg;
-        }
-        case incflo::FluidModel::deSouzaMendesDutra:
-        {
-            return (mu*std::pow(sr,n_flow)+tau_0)*expterm(sr*(eta_0/tau_0))*(eta_0/tau_0);
-        }
         case incflo::FluidModel::SmagorinskyLillySGS:
         {
             // fixme this is not good place for Smagorinsky move to an ABL specific location
@@ -70,17 +47,9 @@ void incflo::compute_viscosity (Vector<MultiFab*> const& vel_eta,
         NonNewtonianViscosity non_newtonian_viscosity;
         non_newtonian_viscosity.fluid_model = m_fluid_model;
         non_newtonian_viscosity.mu = m_mu;
-        non_newtonian_viscosity.n_flow = m_n_0;
-        non_newtonian_viscosity.tau_0 = m_tau_0;
-        non_newtonian_viscosity.eta_0 = m_eta_0;
-        non_newtonian_viscosity.papa_reg = m_papa_reg;
         non_newtonian_viscosity.smag_const = m_Smagorinsky_Lilly_SGS_constant;
 
         for (int lev = 0; lev <= finest_level; ++lev) {
-#ifdef AMREX_USE_EB
-            auto const& fact = EBFactory(lev);
-            auto const& flags = fact.getMultiEBCellFlagFab();
-#endif
 
             const Real dx = geom[lev].CellSize()[0];
             const Real dy = geom[lev].CellSize()[1];
@@ -95,7 +64,7 @@ void incflo::compute_viscosity (Vector<MultiFab*> const& vel_eta,
             const Box& domain = gm.Domain();
 
 #ifdef _OPENMP
-#pragma omp parallel omp if (Gpu::notInLaunchRegion())
+#pragma omp parallel if (Gpu::notInLaunchRegion())
 #endif
             for (MFIter mfi(*vel_eta[lev],TilingIfNotGPU()); mfi.isValid(); ++mfi)
             {
@@ -104,167 +73,140 @@ void incflo::compute_viscosity (Vector<MultiFab*> const& vel_eta,
                 Array4<Real const> const& vel_arr = vel[lev]->const_array(mfi);
                 Array4<Real const> const& rho_arr = rho[lev]->const_array(mfi);
 
-#ifdef AMREX_USE_EB
-                auto const& flag_fab = flags[mfi];
-                auto typ = flag_fab.getType(bx);
-                if (typ == FabType::covered)
+                
+                amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
                 {
-                    amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
-                    {
-                        eta_arr(i,j,k) = 0.0;
-                    });
+                    Real sr = incflo_strainrate<StencilInterior>(i,j,k,idx,idy,idz,vel_arr);
+                    Real den = rho_arr(i,j,k);
+                    eta_arr(i,j,k) = non_newtonian_viscosity(sr,den,ds);
+
+                });
+                
+                
+                /* one-sided stencils for non-periodic bc's */                
+                Box const& bxi = mfi.tilebox();
+
+                int idim = 0;
+                if (!gm.isPeriodic(idim)) {
+                    if (bxi.smallEnd(idim) == domain.smallEnd(idim)) {
+                        
+                        IntVect low(bxi.smallEnd());
+                        IntVect hi(bxi.bigEnd());
+                        int sm = low[idim];
+                        low.setVal(idim,sm);
+                        hi.setVal(idim,sm);
+                      
+                        Box bxlo = Box(low,hi).grow({0,1,1});
+
+                        amrex::ParallelFor(bxlo,
+                        [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+                        {
+                            Real sr = incflo_strainrate<StencilILO>(i,j,k,idx,idy,idz,vel_arr);
+                            Real den = rho_arr(i,j,k);
+                            eta_arr(i,j,k) = non_newtonian_viscosity(sr,den,ds);
+                        });
+                    }
+                    
+                    if (bxi.bigEnd(idim) == domain.bigEnd(idim)) {
+                        
+                        IntVect low(bxi.smallEnd());
+                        IntVect hi(bxi.bigEnd());
+                        int sm = hi[idim];
+                        low.setVal(idim,sm);
+                        hi.setVal(idim,sm);
+
+                        Box bxhi = Box(low,hi).grow({0,1,1});
+
+                        amrex::ParallelFor(bxhi,
+                        [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+                        {
+                           Real sr = incflo_strainrate<StencilIHI>(i,j,k,idx,idy,idz,vel_arr);
+                           Real den = rho_arr(i,j,k);
+                           eta_arr(i,j,k) = non_newtonian_viscosity(sr,den,ds);
+                        });
+                    }
                 }
-                else if (typ == FabType::singlevalued)
-                {
-                    auto const& flag_arr = flag_fab.const_array();
-                    amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
-                    {
-                        Real sr = incflo_strainrate_eb(i,j,k,idx,idy,idz,vel_arr,flag_arr(i,j,k));
-                        Real den = rho_arr(i,j,k);
-                        eta_arr(i,j,k) = non_newtonian_viscosity(sr,den,ds);
-                    });
+                
+                idim = 1;
+                if (!gm.isPeriodic(idim)) {
+                    if (bxi.smallEnd(idim) == domain.smallEnd(idim)) {
+                        
+                        IntVect low(bxi.smallEnd());
+                        IntVect hi(bxi.bigEnd());
+                        int sm = low[idim];
+                        low.setVal(idim,sm);
+                        hi.setVal(idim,sm);
+                      
+                        Box bxlo = Box(low,hi).grow({1,0,1});
+
+                        amrex::ParallelFor(bxlo,
+                        [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+                        {
+                            Real sr = incflo_strainrate<StencilJLO>(i,j,k,idx,idy,idz,vel_arr);
+                            Real den = rho_arr(i,j,k);
+                            eta_arr(i,j,k) = non_newtonian_viscosity(sr,den,ds);
+                        });
+                    }
+                    
+                    if (bxi.bigEnd(idim) == domain.bigEnd(idim)) {
+                        
+                        IntVect low(bxi.smallEnd());
+                        IntVect hi(bxi.bigEnd());
+                        int sm = hi[idim];
+                        low.setVal(idim,sm);
+                        hi.setVal(idim,sm);
+
+                        Box bxhi = Box(low,hi).grow({1,0,1});
+
+                        amrex::ParallelFor(bxhi,
+                        [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+                        {
+                           Real sr = incflo_strainrate<StencilJHI>(i,j,k,idx,idy,idz,vel_arr);
+                           Real den = rho_arr(i,j,k);
+                           eta_arr(i,j,k) = non_newtonian_viscosity(sr,den,ds);
+                        });
+                    }
                 }
-                else
-#endif
-                {
-                    amrex::ParallelFor(bx, [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
-                    {
-                        // fixme strainrate does not account for one sided stencils near walls
-                        Real sr = incflo_strainrate(i,j,k,idx,idy,idz,vel_arr);
-                        Real den = rho_arr(i,j,k);
-                        eta_arr(i,j,k) = non_newtonian_viscosity(sr,den,ds);
-
-                    });
-                    
-                    
-                    /* one-sided stencils for non-periodic bc's */
-                    
-                    // interior valid box
-                    Box const& bxi = mfi.tilebox();
-
-                    int idim = 0;
-                    if (!gm.isPeriodic(idim)) {
-                        if (bxi.smallEnd(idim) == domain.smallEnd(idim)) {
-                            
-                            IntVect low(bxi.smallEnd());
-                            IntVect hi(bxi.bigEnd());
-                            int sm = low[idim];
-                            low.setVal(idim,sm);
-                            hi.setVal(idim,sm);
-                          
-                            Box bxlo = Box(low,hi).grow({0,1,1});
-
-                            amrex::ParallelFor(bxlo,
-                            [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
-                            {
-                                Real sr = incflo_strainrate_ilo(i,j,k,idx,idy,idz,vel_arr);
-                                Real den = rho_arr(i,j,k);
-                                eta_arr(i,j,k) = non_newtonian_viscosity(sr,den,ds);
-                            });
-                        }
+                
+                idim = 2;
+                if (!gm.isPeriodic(idim)) {
+                    if (bxi.smallEnd(idim) == domain.smallEnd(idim)) {
                         
-                        if (bxi.bigEnd(idim) == domain.bigEnd(idim)) {
-                            
-                            IntVect low(bxi.smallEnd());
-                            IntVect hi(bxi.bigEnd());
-                            int sm = hi[idim];
-                            low.setVal(idim,sm);
-                            hi.setVal(idim,sm);
+                        IntVect low(bxi.smallEnd());
+                        IntVect hi(bxi.bigEnd());
+                        int sm = low[idim];
+                        low.setVal(idim,sm);
+                        hi.setVal(idim,sm);
+                      
+                        Box bxlo = Box(low,hi).grow({1,1,0});
 
-                            Box bxhi = Box(low,hi).grow({0,1,1});
-
-                            amrex::ParallelFor(bxhi,
-                            [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
-                            {
-                               Real sr = incflo_strainrate_ihi(i,j,k,idx,idy,idz,vel_arr);
-                               Real den = rho_arr(i,j,k);
-                               eta_arr(i,j,k) = non_newtonian_viscosity(sr,den,ds);
-                            });
-                        }
+                        amrex::ParallelFor(bxlo,
+                        [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+                        {
+                            Real sr = incflo_strainrate<StencilKLO>(i,j,k,idx,idy,idz,vel_arr);
+                            Real den = rho_arr(i,j,k);
+                            eta_arr(i,j,k) = non_newtonian_viscosity(sr,den,ds);
+                        });
                     }
                     
-                    idim = 1;
-                    if (!gm.isPeriodic(idim)) {
-                        if (bxi.smallEnd(idim) == domain.smallEnd(idim)) {
-                            
-                            IntVect low(bxi.smallEnd());
-                            IntVect hi(bxi.bigEnd());
-                            int sm = low[idim];
-                            low.setVal(idim,sm);
-                            hi.setVal(idim,sm);
-                          
-                            Box bxlo = Box(low,hi).grow({1,0,1});
-
-                            amrex::ParallelFor(bxlo,
-                            [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
-                            {
-                                Real sr = incflo_strainrate_jlo(i,j,k,idx,idy,idz,vel_arr);
-                                Real den = rho_arr(i,j,k);
-                                eta_arr(i,j,k) = non_newtonian_viscosity(sr,den,ds);
-                            });
-                        }
+                    if (bxi.bigEnd(idim) == domain.bigEnd(idim)) {
                         
-                        if (bxi.bigEnd(idim) == domain.bigEnd(idim)) {
-                            
-                            IntVect low(bxi.smallEnd());
-                            IntVect hi(bxi.bigEnd());
-                            int sm = hi[idim];
-                            low.setVal(idim,sm);
-                            hi.setVal(idim,sm);
+                        IntVect low(bxi.smallEnd());
+                        IntVect hi(bxi.bigEnd());
+                        int sm = hi[idim];
+                        low.setVal(idim,sm);
+                        hi.setVal(idim,sm);
 
-                            Box bxhi = Box(low,hi).grow({1,0,1});
+                        Box bxhi = Box(low,hi).grow({1,1,0});
 
-                            amrex::ParallelFor(bxhi,
-                            [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
-                            {
-                               Real sr = incflo_strainrate_jhi(i,j,k,idx,idy,idz,vel_arr);
-                               Real den = rho_arr(i,j,k);
-                               eta_arr(i,j,k) = non_newtonian_viscosity(sr,den,ds);
-                            });
-                        }
+                        amrex::ParallelFor(bxhi,
+                        [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
+                        {
+                           Real sr = incflo_strainrate<StencilKHI>(i,j,k,idx,idy,idz,vel_arr);
+                           Real den = rho_arr(i,j,k);
+                           eta_arr(i,j,k) = non_newtonian_viscosity(sr,den,ds);
+                        });
                     }
-                    
-                    idim = 2;
-                    if (!gm.isPeriodic(idim)) {
-                        if (bxi.smallEnd(idim) == domain.smallEnd(idim)) {
-                            
-                            IntVect low(bxi.smallEnd());
-                            IntVect hi(bxi.bigEnd());
-                            int sm = low[idim];
-                            low.setVal(idim,sm);
-                            hi.setVal(idim,sm);
-                          
-                            Box bxlo = Box(low,hi).grow({1,1,0});
-
-                            amrex::ParallelFor(bxlo,
-                            [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
-                            {
-                                Real sr = incflo_strainrate_klo(i,j,k,idx,idy,idz,vel_arr);
-                                Real den = rho_arr(i,j,k);
-                                eta_arr(i,j,k) = non_newtonian_viscosity(sr,den,ds);
-                            });
-                        }
-                        
-                        if (bxi.bigEnd(idim) == domain.bigEnd(idim)) {
-                            
-                            IntVect low(bxi.smallEnd());
-                            IntVect hi(bxi.bigEnd());
-                            int sm = hi[idim];
-                            low.setVal(idim,sm);
-                            hi.setVal(idim,sm);
-
-                            Box bxhi = Box(low,hi).grow({1,1,0});
-
-                            amrex::ParallelFor(bxhi,
-                            [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept
-                            {
-                               Real sr = incflo_strainrate_khi(i,j,k,idx,idy,idz,vel_arr);
-                               Real den = rho_arr(i,j,k);
-                               eta_arr(i,j,k) = non_newtonian_viscosity(sr,den,ds);
-                            });
-                        }
-                    }
-                    
                 }
             }
         }
