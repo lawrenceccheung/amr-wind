@@ -43,6 +43,8 @@ struct MOData
     amrex::Real gamma_h{5.0};
     amrex::Real beta_m{16.0};
 
+    int m_verbose{0};
+
     ThetaCalcType alg_type{HEAT_FLUX};
 
     amrex::Real phi_m() const

@@ -43,7 +43,6 @@ void MOData::update_fluxes(int max_iters)
     amrex::Real surft_iter = 0.0;
     amrex::Real surft_new  = 0.0;
     amrex::Real tol = 1.0e-6;
-    bool        debug = true;
 
     // Initialize variables
     amrex::Real psi_m = 0.0;
@@ -86,7 +85,7 @@ void MOData::update_fluxes(int max_iters)
         ++iter;
     } while ((std::abs(utau_iter - utau) > tol) && (std::abs(surft_iter - surft_new) > tol) && iter <= max_iters);
 
-    if (debug) {
+    if (m_verbose) {
       // For debugging output of convergence loop
       amrex::Print() << "MOData::update_fluxes: iters = "<< iter
 		     << " delta(utau) = "<< std::abs(utau_iter - utau)
