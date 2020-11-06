@@ -83,7 +83,7 @@ void MOData::update_fluxes(int max_iters)
         psi_h = calc_psi_h(zeta);
         utau = kappa * vmag_mean / (std::log(zref / z0) - psi_m);
         ++iter;
-    } while ((std::abs(utau_iter - utau) > tol) && (std::abs(surft_iter - surft_new) > tol) && iter <= max_iters);
+    } while (((std::abs(utau_iter - utau) > tol) || (std::abs(surft_iter - surft_new) > tol)) && iter <= max_iters);
 
     if (m_verbose) {
       // For debugging output of convergence loop
