@@ -1,0 +1,11 @@
+<map id="vstraits.H" name="vstraits.H">
+<area shape="rect" id="node2" href="$tensor_8_h.html" title="tensor.H" alt="" coords="30,155,102,181"/>
+<area shape="rect" id="node9" href="$vector_8_h.html" title="vector.H" alt="" coords="103,80,175,107"/>
+<area shape="rect" id="node3" href="$tensor_i_8_h.html" title="tensorI.H" alt="" coords="5,229,81,256"/>
+<area shape="rect" id="node4" href="$vector__space_8_h.html" title="vector_space.H" alt="" coords="106,229,221,256"/>
+<area shape="rect" id="node5" href="$_box_refiner_8_h.html" title="BoxRefiner.H" alt="" coords="42,304,143,331"/>
+<area shape="rect" id="node7" href="$_cylinder_refiner_8_h.html" title="CylinderRefiner.H" alt="" coords="171,304,297,331"/>
+<area shape="rect" id="node6" href="$_box_refiner_8cpp.html" title="BoxRefiner.cpp" alt="" coords="31,379,143,405"/>
+<area shape="rect" id="node8" href="$_cylinder_refiner_8cpp.html" title="CylinderRefiner.cpp" alt="" coords="168,379,305,405"/>
+<area shape="rect" id="node10" href="$vector_i_8_h.html" title="vectorI.H" alt="" coords="177,155,253,181"/>
+</map>

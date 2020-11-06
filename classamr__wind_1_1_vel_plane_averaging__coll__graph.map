@@ -1,0 +1,10 @@
+<map id="amr_wind::VelPlaneAveraging" name="amr_wind::VelPlaneAveraging">
+<area shape="rect" id="node2" href="$classamr__wind_1_1_f_plane_averaging.html" title="FieldPlaneAveraging" alt="" coords="298,525,439,552"/>
+<area shape="rect" id="node3" href="$classamr__wind_1_1_field.html" title="Computational fieldThis is an abstraction of a collection of MultiFabs over multiple levels..." alt="" coords="206,429,321,455"/>
+<area shape="rect" id="node4" title="STL class. " alt="" coords="213,117,293,143"/>
+<area shape="rect" id="node5" title="STL class. " alt="" coords="189,5,316,47"/>
+<area shape="rect" id="node6" href="$classamr__wind_1_1_field_repo.html" title="Field RepositoryFieldRepo is a database that manages handling of fields used during a simulation..." alt="" coords="101,332,247,359"/>
+<area shape="rect" id="node8" title="STL class. " alt="" coords="5,109,143,151"/>
+<area shape="rect" id="node11" href="$classamr__wind_1_1_sim_time.html" title="Time manager for simulations. " alt="" coords="346,332,485,359"/>
+<area shape="rect" id="node12" href="$classamr__wind_1_1_f_plane_averaging.html" title="Output average of a field on planes normal to a given directionThe user can choose a direction (x..." alt="" coords="441,421,627,463"/>
+</map>
