@@ -40,6 +40,10 @@ void MOData::update_fluxes(int max_iters)
     constexpr amrex::Real eps = 1.0e-16;
     amrex::Real zeta = 0.0;
     amrex::Real utau_iter = 0.0;
+    amrex::Real surft_iter = 0.0;
+    amrex::Real surft_new  = 0.0;
+    amrex::Real tol = 1.0e-6;
+    bool        debug = true;
 
     // Initialize variables
     amrex::Real psi_m = 0.0;
@@ -51,14 +55,18 @@ void MOData::update_fluxes(int max_iters)
         utau_iter = utau;
         switch (alg_type) {
         case HEAT_FLUX:
+	    surft_iter = surf_temp;
             surf_temp = surf_temp_flux * (std::log(zref / z0) - psi_h) /
                             (utau * kappa) +
                         theta_mean;
+	    surft_new = surf_temp;
             break;
 
         case SURFACE_TEMPERATURE:
+	    surft_iter = surf_temp_flux;
             surf_temp_flux = -(theta_mean - surf_temp) * utau * kappa /
                              (std::log(zref / z0) - psi_h);
+	    surft_new = surf_temp_flux;
             break;
         }
 
@@ -76,7 +84,15 @@ void MOData::update_fluxes(int max_iters)
         psi_h = calc_psi_h(zeta);
         utau = kappa * vmag_mean / (std::log(zref / z0) - psi_m);
         ++iter;
-    } while ((std::abs(utau_iter - utau) > 1e-5) && iter <= max_iters);
+    } while ((std::abs(utau_iter - utau) > tol) && (std::abs(surft_iter - surft_new) > tol) && iter <= max_iters);
+
+    if (debug) {
+      // For debugging output of convergence loop
+      amrex::Print() << "MOData::update_fluxes: iters = "<< iter
+		     << " delta(utau) = "<< std::abs(utau_iter - utau)
+		     << " delta(surft) = "<< std::abs(surft_iter - surft_new)
+		     << std::endl;
+    }
 
     if (iter >= max_iters) {
         amrex::Print()
