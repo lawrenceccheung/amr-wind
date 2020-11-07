@@ -87,8 +87,10 @@ void MOData::update_fluxes(int max_iters)
 
     if (m_verbose) {
       // For debugging output of convergence loop
-      amrex::Print() << "MOData::update_fluxes: iters = "<< iter
-		     << " delta(utau) = "<< std::abs(utau_iter - utau)
+      amrex::Print() << "MOData::update_fluxes: iters= "<< iter
+		     << " utau= "<<utau
+		     << " delta(utau)= "<< std::abs(utau_iter - utau)
+		     << " surft= "<<surft_new
 		     << " delta(surft) = "<< std::abs(surft_iter - surft_new)
 		     << std::endl;
     }
