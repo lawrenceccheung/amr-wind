@@ -5,7 +5,6 @@
 #include "amr-wind/wind_energy/actuator/turbine/turbine_utils.H"
 #include "amr-wind/wind_energy/actuator/actuator_ops.H"
 #include "amr-wind/wind_energy/actuator/actuator_utils.H"
-//#include "amr-wind/wind_energy/actuator/turbine/fast/FastIface.H"
 
 
 namespace amr_wind {
