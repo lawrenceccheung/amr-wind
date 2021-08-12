@@ -5,6 +5,8 @@
 #include "amr-wind/wind_energy/actuator/turbine/turbine_utils.H"
 #include "amr-wind/wind_energy/actuator/actuator_ops.H"
 #include "amr-wind/wind_energy/actuator/actuator_utils.H"
+//#include "amr-wind/wind_energy/actuator/turbine/fast/FastIface.H"
+
 
 namespace amr_wind {
 namespace actuator {
@@ -174,6 +176,7 @@ struct InitDataOp<TurbineFast, SrcTrait>
 
         make_component_views(data);
         init_epsilon(data);
+	tdata.fast->fast_replay_turbine(tdata.fast_data); // LCC shifting
     }
 
     void make_component_views(typename TurbineFast::DataType& data)

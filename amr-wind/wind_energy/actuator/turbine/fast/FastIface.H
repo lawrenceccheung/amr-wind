@@ -40,14 +40,14 @@ public:
 
     int num_local_turbines() const { return m_turbine_data.size(); }
 
+    void fast_replay_turbine(FastTurbine&);
+
 protected:
     void allocate_fast_turbines();
 
     void fast_init_turbine(FastTurbine&);
 
     void fast_restart_turbine(FastTurbine&);
-
-    void fast_replay_turbine(FastTurbine&);
 
     void prepare_netcdf_file(FastTurbine&);
 
