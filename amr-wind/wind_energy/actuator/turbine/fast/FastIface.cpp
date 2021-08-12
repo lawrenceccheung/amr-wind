@@ -176,7 +176,6 @@ void FastIface::init_turbine(const int local_id)
 
     case SimMode::replay: {
         fast_init_turbine(fi);
-        //fast_replay_turbine(fi);
         break;
     }
 
