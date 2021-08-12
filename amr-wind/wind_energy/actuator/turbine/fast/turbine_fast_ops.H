@@ -175,7 +175,7 @@ struct InitDataOp<TurbineFast, SrcTrait>
 
         make_component_views(data);
         init_epsilon(data);
-	tdata.fast->fast_replay_turbine(tdata.fast_data); // LCC shifting
+	tdata.fast->fast_replay_turbine(tdata.fast_data);
     }
 
     void make_component_views(typename TurbineFast::DataType& data)
