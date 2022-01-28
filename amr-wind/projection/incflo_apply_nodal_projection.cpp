@@ -128,13 +128,23 @@ void incflo::ApplyProjection(
     auto& grad_p = m_repo.get_field("gp");
     auto& pressure = m_repo.get_field("p");
     auto& velocity = icns().fields().field;
+    auto& velocity_old = icns().fields().field.state(amr_wind::FieldState::Old);
+    auto& mesh_fac = m_repo.get_field("mesh_scaling_factor_cc");
 
+    // TODO: Mesh mapping doesn't work with immersed boundaries
     // Do the pre pressure correction work -- this applies to IB only
     for (auto& pp : m_sim.physics()) {
         pp->pre_pressure_correction_work();
     }
 
+    // ensure velocity is in unmapped mesh space
+    if (velocity.is_mesh_mapped()) {
+        velocity.to_unmapped_mesh();
+    }
+
     // Add the ( grad p /ro ) back to u* (note the +dt)
+    // Also account for mesh mapping in ( grad p /ro ) ->  1/fac * grad(p) *
+    // dt/rho
     if (!incremental) {
         for (int lev = 0; lev <= finest_level; lev++) {
 
@@ -147,12 +157,18 @@ void incflo::ApplyProjection(
                 Array4<Real> const& u = velocity(lev).array(mfi);
                 Array4<Real const> const& rho = density[lev]->const_array(mfi);
                 Array4<Real const> const& gp = grad_p(lev).const_array(mfi);
+                Array4<Real const> const& fac = mesh_fac(lev).const_array(mfi);
+
                 amrex::ParallelFor(
                     bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
                         Real soverrho = scaling_factor / rho(i, j, k);
-                        u(i, j, k, 0) += gp(i, j, k, 0) * soverrho;
-                        u(i, j, k, 1) += gp(i, j, k, 1) * soverrho;
-                        u(i, j, k, 2) += gp(i, j, k, 2) * soverrho;
+
+                        u(i, j, k, 0) +=
+                            1 / fac(i, j, k, 0) * gp(i, j, k, 0) * soverrho;
+                        u(i, j, k, 1) +=
+                            1 / fac(i, j, k, 1) * gp(i, j, k, 1) * soverrho;
+                        u(i, j, k, 2) +=
+                            1 / fac(i, j, k, 2) * gp(i, j, k, 2) * soverrho;
                     });
             }
         }
@@ -192,21 +208,31 @@ void incflo::ApplyProjection(
         }
     }
 
+    // ensure velocity is in unmapped mesh space
+    if (velocity_old.is_mesh_mapped()) {
+        velocity_old.to_unmapped_mesh();
+    }
+
     // Define "vel" to be U^* - U^n rather than U^*
     if (proj_for_small_dt || incremental) {
         for (int lev = 0; lev <= finest_level; ++lev) {
             MultiFab::Subtract(
-                velocity(lev), velocity.state(amr_wind::FieldState::Old)(lev),
-                0, 0, AMREX_SPACEDIM, 0);
+                velocity(lev), velocity_old(lev), 0, 0, AMREX_SPACEDIM, 0);
         }
     }
 
-    // Create sigma
+    // scale U^* to accommodate for mesh mapping -> U^bar = J/fac * U
+    velocity.to_mapped_mesh();
+
+    // Create sigma while accounting for mesh mapping
+    // sigma = 1/(fac^2)*J * dt/rho
     Vector<amrex::MultiFab> sigma(finest_level + 1);
-    if (variable_density) {
+    //    if (variable_density)
+    {
         for (int lev = 0; lev <= finest_level; ++lev) {
             sigma[lev].define(
-                grids[lev], dmap[lev], 1, 0, MFInfo(), Factory(lev));
+                grids[lev], dmap[lev], AMREX_SPACEDIM, 0, MFInfo(),
+                Factory(lev));
 #ifdef _OPENMP
 #pragma omp parallel if (Gpu::notInLaunchRegion())
 #endif
@@ -215,9 +241,16 @@ void incflo::ApplyProjection(
                 Box const& bx = mfi.tilebox();
                 Array4<Real> const& sig = sigma[lev].array(mfi);
                 Array4<Real const> const& rho = density[lev]->const_array(mfi);
+                Array4<Real const> const& fac = mesh_fac(lev).const_array(mfi);
+
                 amrex::ParallelFor(
-                    bx, [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
-                        sig(i, j, k) = scaling_factor / rho(i, j, k);
+                    bx, AMREX_SPACEDIM,
+                    [=] AMREX_GPU_DEVICE(int i, int j, int k, int n) noexcept {
+                        Real det_j =
+                            fac(i, j, k, 0) * fac(i, j, k, 1) * fac(i, j, k, 2);
+
+                        sig(i, j, k, n) = std::pow(fac(i, j, k, n), -2.) *
+                                          det_j * scaling_factor / rho(i, j, k);
                     });
             }
         }
@@ -235,24 +268,23 @@ void incflo::ApplyProjection(
         vel[lev]->setBndry(0.0);
         if (!proj_for_small_dt and !incremental) {
             set_inflow_velocity(lev, time, *vel[lev], 1);
-            //  velocity.fillphysbc(lev, time, *vel[lev], 1);
         }
     }
 
     amr_wind::MLMGOptions options("nodal_proj");
-    if (variable_density) {
-        nodal_projector = std::make_unique<Hydro::NodalProjector>(
-            vel, GetVecOfConstPtrs(sigma), Geom(0, finest_level),
-            options.lpinfo());
-    } else {
-        amrex::Real rho_0 = 1.0;
-        amrex::ParmParse pp("incflo");
-        pp.query("density", rho_0);
 
-        nodal_projector = std::make_unique<Hydro::NodalProjector>(
-            vel, scaling_factor / rho_0, Geom(0, finest_level),
-            options.lpinfo());
-    }
+    //    if (variable_density) {
+    nodal_projector = std::make_unique<Hydro::NodalProjector>(
+        vel, GetVecOfConstPtrs(sigma), Geom(0, finest_level), options.lpinfo());
+    //    } else {
+    //        amrex::Real rho_0 = 1.0;
+    //        amrex::ParmParse pp("incflo");
+    //        pp.query("density", rho_0);
+    //
+    //        nodal_projector = std::make_unique<Hydro::NodalProjector>(
+    //            vel, scaling_factor / rho_0, Geom(0, finest_level),
+    //            options.lpinfo());
+    //    }
 
     // Set MLMG and NodalProjector options
     options(*nodal_projector);
@@ -301,12 +333,14 @@ void incflo::ApplyProjection(
     amr_wind::io::print_mlmg_info(
         "Nodal_projection", nodal_projector->getMLMG());
 
+    // scale U^* back to -> U = fac/J * U^bar
+    velocity.to_unmapped_mesh();
+
     // Define "vel" to be U^{n+1} rather than (U^{n+1}-U^n)
     if (proj_for_small_dt || incremental) {
         for (int lev = 0; lev <= finest_level; ++lev) {
             MultiFab::Add(
-                velocity(lev), velocity.state(amr_wind::FieldState::Old)(lev),
-                0, 0, AMREX_SPACEDIM, 0);
+                velocity(lev), velocity_old(lev), 0, 0, AMREX_SPACEDIM, 0);
         }
     }
 

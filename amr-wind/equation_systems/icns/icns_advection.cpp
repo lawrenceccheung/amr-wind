@@ -42,10 +42,7 @@ amrex::Array<amrex::LinOpBCType, AMREX_SPACEDIM> get_projection_bc(
 } // namespace
 
 MacProjOp::MacProjOp(FieldRepo& repo, bool has_overset, bool variable_density)
-    : m_repo(repo)
-    , m_options("mac_proj")
-    , m_has_overset(has_overset)
-    , m_variable_density(variable_density)
+    : m_repo(repo), m_options("mac_proj"), m_has_overset(has_overset)
 {
     amrex::ParmParse pp("incflo");
     pp.query("rho_0", m_rho_0);
@@ -129,8 +126,11 @@ void MacProjOp::operator()(const FieldState fstate, const amrex::Real dt)
     auto& v_mac = m_repo.get_field("v_mac");
     auto& w_mac = m_repo.get_field("w_mac");
     const auto& density = m_repo.get_field("density", fstate);
+    const auto& mesh_fac_xf = m_repo.get_field("mesh_scaling_factor_xf");
+    const auto& mesh_fac_yf = m_repo.get_field("mesh_scaling_factor_yf");
+    const auto& mesh_fac_zf = m_repo.get_field("mesh_scaling_factor_zf");
 
-    // This will hold (1/rho) on faces
+    // This will hold density on faces
     std::unique_ptr<ScratchField> rho_xf, rho_yf, rho_zf;
 
     amrex::Vector<amrex::Array<amrex::MultiFab*, ICNS::ndim>> rho_face(
@@ -151,8 +151,10 @@ void MacProjOp::operator()(const FieldState fstate, const amrex::Real dt)
     // this can be removed once the nsolve overset
     // masking is implemented in cell based AMReX poisson solvers
 
-    if (m_variable_density || m_has_overset) {
+    // TODO: should box loops below be over grown tile box ?
 
+    //    if (m_variable_density || m_has_overset) {
+    {
         rho_xf = m_repo.create_scratch_field(1, 0, amr_wind::FieldLoc::XFACE);
         rho_yf = m_repo.create_scratch_field(1, 0, amr_wind::FieldLoc::YFACE);
         rho_zf = m_repo.create_scratch_field(1, 0, amr_wind::FieldLoc::ZFACE);
@@ -164,27 +166,85 @@ void MacProjOp::operator()(const FieldState fstate, const amrex::Real dt)
 
             amrex::average_cellcenter_to_face(
                 rho_face[lev], density(lev), geom[lev]);
-            for (int idim = 0; idim < ICNS::ndim; ++idim) {
-                rho_face[lev][idim]->invert(factor, 0);
-            }
+            //            for (int idim = 0; idim < ICNS::ndim; ++idim) {
+            //                rho_face[lev][idim]->invert(factor, 0);
+            //            }
 
+            // scale U^mac to accommodate for mesh mapping -> U^bar = J/fac *
+            // U^mac beta accounted for mesh mapping = J/fac^2 * 1/rho construct
+            // rho and mesh map u_mac on x-face
+            for (amrex::MFIter mfi(*(rho_face[lev][0])); mfi.isValid(); ++mfi) {
+                amrex::Array4<amrex::Real> const& u = u_mac(lev).array(mfi);
+                amrex::Array4<amrex::Real> const& rho =
+                    rho_face[lev][0]->array(mfi);
+                amrex::Array4<amrex::Real const> const& fac =
+                    mesh_fac_xf(lev).array(mfi);
+
+                amrex::ParallelFor(
+                    mfi.tilebox(),
+                    [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+                        amrex::Real det_j =
+                            fac(i, j, k, 0) * fac(i, j, k, 1) * fac(i, j, k, 2);
+                        u(i, j, k) *= det_j / fac(i, j, k, 0);
+                        rho(i, j, k) = factor * det_j /
+                                       std::pow(fac(i, j, k, 0), 2) /
+                                       rho(i, j, k);
+                    });
+            }
+            // construct rho on y-face
+            for (amrex::MFIter mfi(*(rho_face[lev][1])); mfi.isValid(); ++mfi) {
+                amrex::Array4<amrex::Real> const& v = v_mac(lev).array(mfi);
+                amrex::Array4<amrex::Real> const& rho =
+                    rho_face[lev][1]->array(mfi);
+                amrex::Array4<amrex::Real const> const& fac =
+                    mesh_fac_yf(lev).array(mfi);
+
+                amrex::ParallelFor(
+                    mfi.tilebox(),
+                    [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+                        amrex::Real det_j =
+                            fac(i, j, k, 0) * fac(i, j, k, 1) * fac(i, j, k, 2);
+                        v(i, j, k) *= det_j / fac(i, j, k, 1);
+                        rho(i, j, k) = factor * det_j /
+                                       std::pow(fac(i, j, k, 1), 2) /
+                                       rho(i, j, k);
+                    });
+            }
+            // construct rho on z-face
+            for (amrex::MFIter mfi(*(rho_face[lev][2])); mfi.isValid(); ++mfi) {
+                amrex::Array4<amrex::Real> const& w = w_mac(lev).array(mfi);
+                amrex::Array4<amrex::Real> const& rho =
+                    rho_face[lev][2]->array(mfi);
+                amrex::Array4<amrex::Real const> const& fac =
+                    mesh_fac_zf(lev).array(mfi);
+
+                amrex::ParallelFor(
+                    mfi.tilebox(),
+                    [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+                        amrex::Real det_j =
+                            fac(i, j, k, 0) * fac(i, j, k, 1) * fac(i, j, k, 2);
+                        w(i, j, k) *= det_j / fac(i, j, k, 2);
+                        rho(i, j, k) = factor * det_j /
+                                       std::pow(fac(i, j, k, 2), 2) /
+                                       rho(i, j, k);
+                    });
+            }
+            // assemble scaled beta for all faces
             rho_face_const.push_back(GetArrOfConstPtrs(rho_face[lev]));
         }
 
-        if (m_need_init) {
+        if (m_need_init)
             init_projector(rho_face_const);
-        } else {
+        else
             m_mac_proj->updateBeta(rho_face_const);
-        }
-
-    } else {
-
-        if (m_need_init) {
-            init_projector(factor / m_rho_0);
-        } else {
-            m_mac_proj->updateBeta(factor / m_rho_0);
-        }
     }
+    //    } else {
+    //
+    //        if (m_need_init)
+    //            init_projector(factor / m_rho_0);
+    //        else
+    //            m_mac_proj->updateBeta(factor / m_rho_0);
+    //    }
 
     for (int lev = 0; lev < m_repo.num_active_levels(); ++lev) {
 

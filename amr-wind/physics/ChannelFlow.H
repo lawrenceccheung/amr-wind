@@ -4,6 +4,7 @@
 #include "amr-wind/core/Physics.H"
 #include "amr-wind/core/Field.H"
 #include "amr-wind/CFDSim.H"
+#include <AMReX_REAL.H>
 
 namespace amr_wind {
 namespace channel_flow {
@@ -30,6 +31,10 @@ public:
         const IndexSelector& idxOp,
         const int n_idx);
 
+    amrex::Real compute_error();
+
+    void output_error();
+
     void post_init_actions() override;
 
     void post_regrid_actions() override {}
@@ -49,6 +54,9 @@ private:
     //! initial density value
     amrex::Real m_rho{1.0};
 
+    //! viscosity
+    amrex::Real m_mu{1.0};
+
     //! Re_tau
     amrex::Real m_re_tau{1000.0};
 
@@ -66,6 +74,18 @@ private:
 
     //! Von-Karman constant
     amrex::Real m_kappa{0.41};
+
+    bool m_laminar{false};
+
+    bool m_dns{false};
+
+    amrex::Real m_mean_vel;
+
+    //! output precision
+    const int m_w{18};
+
+    //! error log file
+    std::string m_output_fname{"channel_flow.log"};
 };
 } // namespace channel_flow
 } // namespace amr_wind

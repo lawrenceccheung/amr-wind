@@ -30,7 +30,6 @@ private:
     MLMGOptions m_options;
     bool m_has_overset{false};
     bool m_need_init{true};
-    bool m_variable_density{false};
     amrex::Real m_rho_0{1.0};
 };
 
@@ -341,6 +340,12 @@ struct AdvectionOp<ICNS, fvm::MOL>
         // cppcheck-suppress constVariable
         auto& conv_term = fields.conv_term.state(fstate);
         auto& dof_field = fields.field.state(fstate);
+
+        // computation of velocity on faces requires
+        // dof field to be in mapped mesh space
+        if (dof_field.is_mesh_mapped()) {
+            dof_field.to_unmapped_mesh();
+        }
 
         //
         // Predict velocities
