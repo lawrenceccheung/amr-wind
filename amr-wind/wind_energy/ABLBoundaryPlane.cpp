@@ -905,13 +905,14 @@ void ABLBoundaryPlane::populate_data(
 
         // Ensure inflow data exists at this level
         if (lev >= m_in_data.nlevels(ori)) {
-            amrex::Abort("No inflow data at this level.");
+	  continue;
+	  //amrex::Abort("No inflow data at this level.");
         }
 
-        if (ori.isHigh()) {
-            amrex::Warning(
-                "We typically don't inflow boundary planes on the high side.");
-        }
+        // if (ori.isHigh()) {
+        //     amrex::Warning(
+        //         "We typically don't inflow boundary planes on the high side.");
+        // }
 
         const size_t nc = mfab.nComp();
 
